@@ -17,6 +17,83 @@ import json
 import re
 import nvwave
 import os
+import tempfile
+
+
+# ---- Simple media playback (Windows MCI) ----
+# NVDA's bundled wxPython may not include wx.media on some builds.
+# To support basic play/pause/stop without extra dependencies, we use Windows MCI via ctypes.
+try:
+    import ctypes
+    _MCI_ALIAS = "wikiFusionMCI"
+    _mciSendStringW = ctypes.windll.winmm.mciSendStringW  # type: ignore[attr-defined]
+    _mciSendStringW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint, ctypes.c_void_p]
+    _mciSendStringW.restype = ctypes.c_uint
+
+    def _mciSend(cmd: str) -> None:
+        # MCI returns 0 on success.
+        err = _mciSendStringW(cmd, None, 0, None)
+        if err != 0:
+            raise OSError(int(err))
+
+    def _mciQuery(cmd: str) -> str:
+        # Query an MCI string result.
+        buf = ctypes.create_unicode_buffer(256)
+        err = _mciSendStringW(cmd, buf, 256, None)
+        if err != 0:
+            raise OSError(int(err))
+        return (buf.value or "").strip()
+
+    def _mciGetMode() -> str:
+        # Returns playing/paused/stopped/not ready, etc.
+        return _mciQuery(f"status {_MCI_ALIAS} mode")
+
+    def _mciStopAndClose() -> None:
+        try:
+            _mciSend(f"stop {_MCI_ALIAS}")
+        except Exception:
+            pass
+        try:
+            _mciSend(f"close {_MCI_ALIAS}")
+        except Exception:
+            pass
+
+    def _mciPlayPath(path: str) -> None:
+        # Use explicit type when possible. MCI is most reliable for WAV/MP3.
+        _mciStopAndClose()
+        ext = os.path.splitext(path)[1].lower()
+        mciType = ""
+        if ext == ".mp3":
+            mciType = " type mpegvideo"
+        elif ext == ".wav":
+            mciType = " type waveaudio"
+        _mciSend(f"open \"{path}\"{mciType} alias {_MCI_ALIAS}")
+        _mciSend(f"play {_MCI_ALIAS} from 0")
+
+    def _mciPause() -> None:
+        _mciSend(f"pause {_MCI_ALIAS}")
+
+    def _mciResume() -> None:
+        _mciSend(f"resume {_MCI_ALIAS}")
+
+except Exception:
+    _MCI_ALIAS = None  # type: ignore[assignment]
+
+    def _mciStopAndClose() -> None:
+        return
+
+    def _mciPlayPath(path: str) -> None:
+        raise OSError("MCI unavailable")
+
+    def _mciPause() -> None:
+        raise OSError("MCI unavailable")
+
+    def _mciResume() -> None:
+        raise OSError("MCI unavailable")
+
+
+    def _mciGetMode() -> str:
+        return ""
 
 addonHandler.initTranslation()
 
@@ -171,12 +248,121 @@ def _wpSummary(title):
         return str(page.get("extract") or "")
     return ""
 
-def _httpGetJson(url, timeout=10):
+def _httpGetJson(url, params=None, timeout=10):
+    """HTTP GET and decode JSON.
+
+    Backward compatible:
+      - _httpGetJson(url) -> uses default timeout
+      - _httpGetJson(url, 15) -> timeout=15
+      - _httpGetJson(baseUrl, paramsDict) -> appends query string built from params
+      - _httpGetJson(baseUrl, paramsDict, 15) -> params + timeout
+    """
+    # Back-compat: if second arg is numeric, treat it as timeout.
+    if params is not None and not isinstance(params, dict):
+        try:
+            timeout = int(params)
+            params = None
+        except Exception:
+            # If it's not an int, fall through and let urllib raise.
+            pass
+
+    try:
+        if isinstance(params, dict) and params:
+            try:
+                qs = urllib.parse.urlencode(params)
+            except Exception:
+                qs = ""
+            if qs:
+                url = url + ("&" if "?" in url else "?") + qs
+    except Exception:
+        pass
+
     req = urllib.request.Request(url, headers={"User-Agent": "wikiFusion (NVDA addon)"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=int(timeout)) as resp:
         data = resp.read()
     return json.loads(data.decode("utf-8", errors="replace"))
 
+
+
+_MEDIA_EXTS = (".ogg", ".oga", ".wav", ".mp3", ".flac", ".m4a", ".aac")
+
+def _batched(items, batchSize):
+    for i in range(0, len(items), batchSize):
+        yield items[i:i + batchSize]
+
+def _fileTitlesToUrls(apiBase, fileTitles):
+    # Returns list of (fileTitle, url) for titles that resolve to a URL.
+    if not fileTitles:
+        return []
+    results = []
+    for batch in _batched(fileTitles, 20):
+        params = {
+            "action": "query",
+            "titles": "|".join(batch),
+            "prop": "imageinfo",
+            "iiprop": "url",
+            "format": "json",
+        }
+        data = _httpGetJson(apiBase, params)
+        pages = (data or {}).get("query", {}).get("pages", {}) or {}
+        for page in pages.values():
+            title = str(page.get("title", "") or "")
+            ii = page.get("imageinfo", []) or []
+            if ii and isinstance(ii, list):
+                url = str(ii[0].get("url", "") or "")
+                if title and url:
+                    results.append((title, url))
+    return results
+
+def _extractMediaFromParseImages(images):
+    out = []
+    for name in (images or []):
+        fn = str(name or "")
+        if not fn:
+            continue
+        lower = fn.lower()
+        if lower.endswith(_MEDIA_EXTS):
+            if not fn.lower().startswith("file:"):
+                fn = "File:" + fn
+            out.append(fn)
+    # stable order, de-dup
+    seen = set()
+    deduped = []
+    for t in out:
+        k = t.lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        deduped.append(t)
+    return deduped
+
+def _wpMediaFiles(title, limit=50):
+    # Uses Wikipedia API to find media files referenced by the page (commonly pronunciation OGG).
+    apiBase = _wpApiBase()
+    params = {"action": "parse", "page": title, "prop": "images", "format": "json"}
+    data = _httpGetJson(apiBase, params)
+    images = (data or {}).get("parse", {}).get("images", []) or []
+    fileTitles = _extractMediaFromParseImages(images)[:int(limit)]
+    pairs = _fileTitlesToUrls(apiBase, fileTitles)
+    items = []
+    for fileTitle, url in pairs:
+        label = fileTitle.replace("File:", "").strip()
+        items.append({"title": fileTitle, "label": label, "url": url})
+    return items
+
+def _wtMediaFiles(title, limit=50):
+    # Wiktionary can also contain pronunciation audio.
+    apiBase = _apiBase()
+    params = {"action": "parse", "page": title, "prop": "images", "format": "json"}
+    data = _httpGetJson(apiBase, params)
+    images = (data or {}).get("parse", {}).get("images", []) or []
+    fileTitles = _extractMediaFromParseImages(images)[:int(limit)]
+    pairs = _fileTitlesToUrls(apiBase, fileTitles)
+    items = []
+    for fileTitle, url in pairs:
+        label = fileTitle.replace("File:", "").strip()
+        items.append({"title": fileTitle, "label": label, "url": url})
+    return items
 def _opensearch(query):
     maxMatches = _getInt(_s().get("maxMatches", 50), 50, 1, 50)
     params = {
@@ -530,11 +716,58 @@ class WikiFusionDialog(wx.Dialog):
         )
         mainSizer.Add(self.results, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 5)
 
-        # Article
-        self.article = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.BORDER_SUNKEN)
-        mainSizer.Add(self.article, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 5)
+        # Article + Media
+        contentSizer = wx.BoxSizer(wx.HORIZONTAL)
 
-        # Buttons
+        self.article = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.BORDER_SUNKEN)
+        contentSizer.Add(self.article, 3, wx.EXPAND | wx.ALL, 5)
+
+        mediaSizer = wx.BoxSizer(wx.VERTICAL)
+        mediaSizer.Add(wx.StaticText(self, label=_("Media")), 0, wx.LEFT | wx.TOP, 5)
+        self.mediaList = wx.ListBox(self, choices=[], style=wx.LB_SINGLE | wx.BORDER_SUNKEN)
+        mediaSizer.Add(self.mediaList, 1, wx.EXPAND | wx.ALL, 5)
+
+        mediaBtnSizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.mediaPlayBtn = wx.Button(self, label=_("&Play/Stop"))
+        self.mediaPauseBtn = wx.Button(self, label=_("P&ause/Resume"))
+        self.mediaDownloadBtn = wx.Button(self, label=_("&Download"))
+        mediaBtnSizer.Add(self.mediaPlayBtn, 1, wx.EXPAND | wx.ALL, 2)
+        mediaBtnSizer.Add(self.mediaPauseBtn, 1, wx.EXPAND | wx.ALL, 2)
+        mediaBtnSizer.Add(self.mediaDownloadBtn, 1, wx.EXPAND | wx.ALL, 2)
+        mediaSizer.Add(mediaBtnSizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 5)
+        contentSizer.Add(mediaSizer, 1, wx.EXPAND)
+
+        mainSizer.Add(contentSizer, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 0)
+
+        # Media playback backend (optional)
+        self._mediaItems = []
+        self._mediaPlayingPath = None
+        self._mediaPaused = False
+        self._mediaTempDir = os.path.join(tempfile.gettempdir(), "wikiFusionMedia")
+        try:
+            os.makedirs(self._mediaTempDir, exist_ok=True)
+        except Exception:
+            pass
+
+        try:
+            import wx.media as wxmedia  # type: ignore
+        except Exception:
+            wxmedia = None
+
+        self._wxmedia = wxmedia
+        self._mediaCtrl = None
+        if wxmedia is not None:
+            try:
+                self._mediaCtrl = wxmedia.MediaCtrl(self)
+                self._mediaCtrl.Hide()
+                try:
+                    if hasattr(wxmedia, "EVT_MEDIA_FINISHED"):
+                        self._mediaCtrl.Bind(wxmedia.EVT_MEDIA_FINISHED, self._onMediaFinished)
+                except Exception:
+                    pass
+            except Exception:
+                self._mediaCtrl = None
+# Buttons
         btnSizer = wx.BoxSizer(wx.HORIZONTAL)
         self.openBtn = wx.Button(self, label=_("&Open in Browser"))
         self.clearBtn = wx.Button(self, label=_("C&lear"))
@@ -567,10 +800,20 @@ class WikiFusionDialog(wx.Dialog):
         self.clearBtn.Bind(wx.EVT_BUTTON, self.onClear)
         self.closeBtn.Bind(wx.EVT_BUTTON, self.onClose)
 
+        # Media buttons
+        self.mediaPlayBtn.Bind(wx.EVT_BUTTON, lambda evt: self._mediaPlaySelected())
+        self.mediaPauseBtn.Bind(wx.EVT_BUTTON, lambda evt: self._mediaPauseToggle())
+        self.mediaDownloadBtn.Bind(wx.EVT_BUTTON, lambda evt: self._mediaDownloadSelected())
+
         self.Bind(wx.EVT_CHAR_HOOK, self.onCharHook)
         self.Bind(wx.EVT_CLOSE, self.onClose)
 
         self.openBtn.Enable(False)
+
+        # Media list bindings
+        self.mediaList.Bind(wx.EVT_KEY_DOWN, self.onMediaKeyDown)
+        self.mediaList.Bind(wx.EVT_CHAR_HOOK, self.onMediaCharHook)
+        self.mediaList.Bind(wx.EVT_LISTBOX_DCLICK, lambda evt: self._mediaPlaySelected())
 
         wx.CallAfter(self.query.SetFocus)
 
@@ -578,6 +821,257 @@ class WikiFusionDialog(wx.Dialog):
         key = evt.GetKeyCode()
         if key == wx.WXK_ESCAPE:
             self.onClose(None)
+            return
+        if key == wx.WXK_F1:
+            self._openHelp()
+            return
+        evt.Skip()
+
+    def _openHelp(self):
+        # Open the add-on help file (doc/en/readme.html) in the default browser.
+        try:
+            helpPath = _addonPath("doc", "en", "readme.html")
+            if not helpPath or not os.path.isfile(helpPath):
+                ui.message(_("Help file not found."))
+                return
+            if hasattr(os, "startfile"):
+                os.startfile(helpPath)  # type: ignore[attr-defined]
+            else:
+                webbrowser.open("file://" + urllib.parse.quote(helpPath))
+        except Exception as e:
+            ui.message(_("Unable to open help: {0}").format(e))
+
+
+    def _getSelectedMediaItem(self):
+        if not getattr(self, "_mediaItems", None):
+            return None
+        idx = -1
+        try:
+            idx = self.mediaList.GetSelection()
+        except Exception:
+            idx = -1
+        if idx is None or idx < 0 or idx >= len(self._mediaItems):
+            return None
+        return self._mediaItems[idx]
+
+    def _mediaStop(self):
+        try:
+            _mciStopAndClose()
+        except Exception:
+            pass
+        if getattr(self, "_mediaCtrl", None) is not None:
+            try:
+                self._mediaCtrl.Stop()
+            except Exception:
+                pass
+        self._mediaPlayingPath = None
+        self._mediaPaused = False
+
+    def _onMediaFinished(self, evt):
+        # Reset state when playback ends naturally, so Enter will play again immediately.
+        self._mediaPlayingPath = None
+        self._mediaPaused = False
+        try:
+            evt.Skip()
+        except Exception:
+            pass
+
+    def _isMediaActive(self) -> bool:
+        # True if the in-addon player is currently playing or paused.
+        if getattr(self, "_mediaCtrl", None) is not None and getattr(self, "_wxmedia", None) is not None:
+            try:
+                st = self._mediaCtrl.GetState()
+                playing = getattr(self._wxmedia, "MEDIASTATE_PLAYING", None)
+                paused = getattr(self._wxmedia, "MEDIASTATE_PAUSED", None)
+                if st == playing or st == paused:
+                    return True
+            except Exception:
+                pass
+        try:
+            mode = (_mciGetMode() or "").strip().lower()
+            if mode in ("playing", "paused"):
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _mediaPauseToggle(self):
+        if self._mediaPlayingPath is None:
+            return
+
+        # Prefer wx.media if present.
+        if getattr(self, "_mediaCtrl", None) is not None:
+            try:
+                if not self._mediaPaused:
+                    self._mediaCtrl.Pause()
+                    self._mediaPaused = True
+                else:
+                    self._mediaCtrl.Play()
+                    self._mediaPaused = False
+                return
+            except Exception:
+                pass
+
+        # Fallback: Windows MCI pause/resume.
+        try:
+            if not self._mediaPaused:
+                _mciPause()
+                self._mediaPaused = True
+            else:
+                _mciResume()
+                self._mediaPaused = False
+        except Exception:
+            pass
+
+    def _downloadToPath(self, url, destPath):
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "wikiFusion (NVDA add-on)",
+                "Accept": "*/*",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = r.read()
+        with open(destPath, "wb") as f:
+            f.write(data)
+
+    def _mediaPlaySelected(self):
+        item = self._getSelectedMediaItem()
+        if not item:
+            return
+
+        url = str(item.get("url", "") or "")
+        label = str(item.get("label", "") or "media")
+        if not url:
+            return
+
+        # Build a stable filename (keep extension if present in label or URL).
+        urlPath = ""
+        try:
+            urlPath = urllib.parse.urlparse(url).path or ""
+        except Exception:
+            urlPath = ""
+        urlName = os.path.basename(urlPath) if urlPath else ""
+        labelName = label.strip() or "media"
+
+        ext = os.path.splitext(labelName)[1]
+        if not ext and urlName:
+            ext = os.path.splitext(urlName)[1]
+        if not ext:
+            ext = ".bin"
+
+        base = os.path.splitext(labelName)[0] or os.path.splitext(urlName)[0] or "media"
+        safeBase = re.sub(r"[^A-Za-z0-9._-]+", "_", base)[:120].strip("._-") or "media"
+        safeName = safeBase + ext.lower()
+        tempPath = os.path.join(self._mediaTempDir, safeName)
+
+        # Toggle play/stop for the selected file.
+        # If playback has already finished, we treat Enter as "play again" (no double-press).
+        try:
+            if self._mediaPlayingPath and os.path.normcase(self._mediaPlayingPath) == os.path.normcase(tempPath):
+                if self._isMediaActive():
+                    self._mediaStop()
+                    return
+                # Finished/stopped already; reset and fall through to play again.
+                self._mediaPlayingPath = None
+                self._mediaPaused = False
+        except Exception:
+            pass
+
+        # Download to temp (only if not already present).
+        try:
+            if not os.path.isfile(tempPath) or os.path.getsize(tempPath) == 0:
+                self._downloadToPath(url, tempPath)
+        except Exception as e:
+            ui.message(_("Failed to download media: {0}").format(e))
+            return
+
+        # Play using wx.media if available; otherwise try Windows MCI; otherwise open externally.
+        if getattr(self, "_mediaCtrl", None) is not None:
+            try:
+                if self._mediaCtrl.Load(tempPath):
+                    self._mediaCtrl.Play()
+                    self._mediaPlayingPath = tempPath
+                    self._mediaPaused = False
+                    return
+            except Exception:
+                pass
+
+        try:
+            _mciPlayPath(tempPath)
+            self._mediaPlayingPath = tempPath
+            self._mediaPaused = False
+            return
+        except Exception:
+            pass
+
+        # Fallback: open with default system handler
+        try:
+            if hasattr(os, "startfile"):
+                os.startfile(tempPath)  # type: ignore[attr-defined]
+            else:
+                webbrowser.open("file://" + urllib.parse.quote(tempPath))
+            self._mediaPlayingPath = tempPath
+            self._mediaPaused = False
+        except Exception as e:
+            ui.message(_("Playback unavailable. Use Ctrl+Enter to download. ({0})").format(e))
+
+    def _mediaDownloadSelected(self):
+        item = self._getSelectedMediaItem()
+        if not item:
+            return
+        url = str(item.get("url", "") or "")
+        label = str(item.get("label", "") or "media")
+        if not url:
+            return
+
+        defaultName = re.sub(r"[\\/:*?\"<>|]+", "_", label) or "media"
+        with wx.FileDialog(
+            self,
+            message=_("Save media file"),
+            defaultFile=defaultName,
+            wildcard=_("All files (*.*)|*.*"),
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+        ) as dlg:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            path = dlg.GetPath()
+
+        try:
+            self._downloadToPath(url, path)
+            ui.message(_("Saved: {0}").format(path))
+        except Exception as e:
+            ui.message(_("Failed to save: {0}").format(e))
+
+    def onMediaKeyDown(self, evt):
+        key = evt.GetKeyCode()
+
+        if key == wx.WXK_RETURN:
+            if evt.ControlDown():
+                self._mediaDownloadSelected()
+            else:
+                self._mediaPlaySelected()
+            return
+
+        if key == wx.WXK_SPACE:
+            self._mediaPauseToggle()
+            return
+
+        evt.Skip()
+
+    def onMediaCharHook(self, evt):
+        # Some wx.ListBox builds don't reliably fire EVT_KEY_DOWN for Enter/Space.
+        # EVT_CHAR_HOOK is more consistent across NVDA's bundled wxPython.
+        key = evt.GetKeyCode()
+        if key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
+            if evt.ControlDown():
+                self._mediaDownloadSelected()
+            else:
+                self._mediaPlaySelected()
+            return
+        if key == wx.WXK_SPACE:
+            self._mediaPauseToggle()
             return
         evt.Skip()
 
@@ -598,6 +1092,18 @@ class WikiFusionDialog(wx.Dialog):
         self._currentItem = None
         self._currentUrl = None
         self.openBtn.Enable(False)
+
+        # Media
+        try:
+            self._mediaStop()
+        except Exception:
+            pass
+        try:
+            self._mediaItems = []
+            self.mediaList.Set([])
+            self.mediaList.Enable(False)
+        except Exception:
+            pass
 
     def onClear(self, evt):
         self.query.SetValue("")
@@ -821,7 +1327,8 @@ class WikiFusionDialog(wx.Dialog):
             if source == "Wikipedia":
                 text = _wpSummary(title)
                 url = _wpEntryUrl(title)
-                wx.CallAfter(self._onLoadDone, item, originalQuery, "", text, "", [], [], False, url, focusArticle, None)
+                media = _wpMediaFiles(title)
+                wx.CallAfter(self._onLoadDone, item, originalQuery, "", text, "", [], [], media, False, url, focusArticle, None)
                 return
 
             # Wiktionary
@@ -830,13 +1337,14 @@ class WikiFusionDialog(wx.Dialog):
             wx.CallAfter(
                 self._onLoadDone,
                 item, originalQuery, langUsed, defs, langLabel, syns, ants,
+                _wtMediaFiles(title),
                 _coerce_bool(_s().get("autoOpenInBrowser", False), False),
                 url, focusArticle, None
             )
         except Exception as e:
-            wx.CallAfter(self._onLoadDone, item, originalQuery, None, [], "Unknown", [], [], False, None, focusArticle, str(e))
+            wx.CallAfter(self._onLoadDone, item, originalQuery, None, [], "Unknown", [], [], [], False, None, focusArticle, str(e))
 
-    def _onLoadDone(self, item, originalQuery, langUsed, defsOrText, langLabel, syns, ants, autoOpen, url, focusArticle, err):
+    def _onLoadDone(self, item, originalQuery, langUsed, defsOrText, langLabel, syns, ants, mediaItems, autoOpen, url, focusArticle, err):
         title = str(item.get("title", "") or "")
         source = str(item.get("source", "") or "")
 
@@ -882,6 +1390,20 @@ class WikiFusionDialog(wx.Dialog):
         self.article.SetValue(textOut)
         try:
             self.article.SetInsertionPoint(0)
+        except Exception:
+            pass
+
+
+        # Media list
+        try:
+            self._mediaStop()
+        except Exception:
+            pass
+        self._mediaItems = mediaItems if isinstance(mediaItems, list) else []
+        try:
+            labels = [str(it.get("label", "") or str(it.get("title", "") or "")) for it in self._mediaItems]
+            self.mediaList.Set(labels)
+            self.mediaList.Enable(bool(labels))
         except Exception:
             pass
 

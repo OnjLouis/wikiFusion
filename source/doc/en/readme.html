@@ -14,6 +14,15 @@
 <body>
   <h1>WikiFusion</h1>
 
+  <h2>What's new in 1.4</h2>
+  <ul>
+    <li><strong>Integrated media playback.</strong> Pages that contain audio (such as Wiktionary pronunciation guides) now show a Media list beside the article.</li>
+    <li>Media can be played directly inside WikiFusion without opening your external media player.</li>
+    <li>WikiFusion automatically uses <code>ffmpeg</code> (if available on your system PATH) to decode formats such as OGG and OPUS commonly used on Wikimedia sites.</li>
+    <li>If <code>ffmpeg</code> is not available, WikiFusion will inform you and you can still download the file with <kbd>Ctrl</kbd>+<kbd>Enter</kbd>.</li>
+  </ul>
+
+
   <p>
     WikiFusion is a fast lookup add-on for NVDA that combines the best parts of <strong>wikiSeek</strong> (Wikipedia)
     and <strong>dictionarySeek</strong> (Wiktionary) into one workflow.
@@ -61,12 +70,38 @@
 
   <h2>Keyboard shortcuts</h2>
   <ul>
+    <li><kbd>F1</kbd>: open the WikiFusion help file</li>
     <li><kbd>NVDA</kbd>+<kbd>Alt</kbd>+<kbd>I</kbd>: open WikiFusion</li>
     <li><kbd>Enter</kbd> (in search box): run search</li>
     <li><kbd>Enter</kbd> (on a result): load selected item</li>
     <li><kbd>Ctrl</kbd>+<kbd>Enter</kbd> (on a result): open the selected item in your browser</li>
     <li><kbd>Ctrl</kbd>+<kbd>C</kbd> (on a result): copy (see below)</li>
   </ul>
+
+  <h2>Media list (pronunciation guides, audio examples)</h2>
+  <p>
+    When a page includes audio files (for example, Wiktionary pronunciations), they appear in a
+    <strong>Media</strong> list to the right of the article view.
+  </p>
+
+  <ul>
+    <li><kbd>Enter</kbd>: play the selected media item (press again to stop)</li>
+    <li><kbd>Space</kbd>: pause/resume the currently playing item</li>
+    <li><kbd>Ctrl</kbd>+<kbd>Enter</kbd>: download the selected item</li>
+  </ul>
+
+  <div class="note">
+    <p>
+      WikiFusion plays media directly inside the add-on and will not open your external media player.
+      Many Wikimedia pronunciation files are in formats such as OGG or OPUS.
+      If the <code>ffmpeg</code> tool is available on your system PATH, WikiFusion will automatically
+      use it to decode these formats so they can be played internally.
+    </p>
+    <p>
+      If <code>ffmpeg</code> is not available, WikiFusion will notify you and you can still download
+      the file using <kbd>Ctrl</kbd>+<kbd>Enter</kbd>.
+    </p>
+  </div>
 
   <h2>Copy behaviour (Ctrl+C)</h2>
   <p>
