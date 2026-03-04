@@ -15,6 +15,8 @@ import urllib.parse
 import urllib.request
 import json
 import re
+import shutil
+import subprocess
 import nvwave
 import os
 import tempfile
@@ -31,22 +33,10 @@ try:
     _mciSendStringW.restype = ctypes.c_uint
 
     def _mciSend(cmd: str) -> None:
-        # MCI returns 0 on success.
+        # MCI returns 0 on success. We intentionally keep this silent and handle failure by exception.
         err = _mciSendStringW(cmd, None, 0, None)
         if err != 0:
             raise OSError(int(err))
-
-    def _mciQuery(cmd: str) -> str:
-        # Query an MCI string result.
-        buf = ctypes.create_unicode_buffer(256)
-        err = _mciSendStringW(cmd, buf, 256, None)
-        if err != 0:
-            raise OSError(int(err))
-        return (buf.value or "").strip()
-
-    def _mciGetMode() -> str:
-        # Returns playing/paused/stopped/not ready, etc.
-        return _mciQuery(f"status {_MCI_ALIAS} mode")
 
     def _mciStopAndClose() -> None:
         try:
@@ -91,11 +81,40 @@ except Exception:
     def _mciResume() -> None:
         raise OSError("MCI unavailable")
 
-
-    def _mciGetMode() -> str:
-        return ""
-
 addonHandler.initTranslation()
+
+
+def _whichFfmpeg():
+    """Return ffmpeg executable path if available on PATH, else None."""
+    try:
+        return shutil.which("ffmpeg") or shutil.which("ffmpeg.exe")
+    except Exception:
+        return None
+
+
+def _isFfmpegDecodableExt(ext):
+    ext = (ext or "").lower()
+    return ext in (".ogg", ".oga", ".opus", ".webm", ".m4a", ".aac", ".flac")
+
+
+def _ffmpegDecodeToWav(ffmpegPath, srcPath, dstWavPath):
+    """Decode srcPath to a PCM WAV at dstWavPath using ffmpeg."""
+    cmd = [
+        ffmpegPath,
+        "-y",
+        "-v", "error",
+        "-i", srcPath,
+        "-acodec", "pcm_s16le",
+        "-ac", "2",
+        "-ar", "44100",
+        dstWavPath,
+    ]
+    subprocess.run(
+        cmd,
+        check=True,
+        timeout=20,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
 
 ADDON_NAME = "wikiFusion"
 
@@ -760,11 +779,6 @@ class WikiFusionDialog(wx.Dialog):
             try:
                 self._mediaCtrl = wxmedia.MediaCtrl(self)
                 self._mediaCtrl.Hide()
-                try:
-                    if hasattr(wxmedia, "EVT_MEDIA_FINISHED"):
-                        self._mediaCtrl.Bind(wxmedia.EVT_MEDIA_FINISHED, self._onMediaFinished)
-                except Exception:
-                    pass
             except Exception:
                 self._mediaCtrl = None
 # Buttons
@@ -867,34 +881,6 @@ class WikiFusionDialog(wx.Dialog):
         self._mediaPlayingPath = None
         self._mediaPaused = False
 
-    def _onMediaFinished(self, evt):
-        # Reset state when playback ends naturally, so Enter will play again immediately.
-        self._mediaPlayingPath = None
-        self._mediaPaused = False
-        try:
-            evt.Skip()
-        except Exception:
-            pass
-
-    def _isMediaActive(self) -> bool:
-        # True if the in-addon player is currently playing or paused.
-        if getattr(self, "_mediaCtrl", None) is not None and getattr(self, "_wxmedia", None) is not None:
-            try:
-                st = self._mediaCtrl.GetState()
-                playing = getattr(self._wxmedia, "MEDIASTATE_PLAYING", None)
-                paused = getattr(self._wxmedia, "MEDIASTATE_PAUSED", None)
-                if st == playing or st == paused:
-                    return True
-            except Exception:
-                pass
-        try:
-            mode = (_mciGetMode() or "").strip().lower()
-            if mode in ("playing", "paused"):
-                return True
-        except Exception:
-            pass
-        return False
-
     def _mediaPauseToggle(self):
         if self._mediaPlayingPath is None:
             return
@@ -966,16 +952,11 @@ class WikiFusionDialog(wx.Dialog):
         safeName = safeBase + ext.lower()
         tempPath = os.path.join(self._mediaTempDir, safeName)
 
-        # Toggle play/stop for the selected file.
-        # If playback has already finished, we treat Enter as "play again" (no double-press).
+        # Toggle stop if already playing the same file
         try:
-            if self._mediaPlayingPath and os.path.normcase(self._mediaPlayingPath) == os.path.normcase(tempPath):
-                if self._isMediaActive():
-                    self._mediaStop()
-                    return
-                # Finished/stopped already; reset and fall through to play again.
-                self._mediaPlayingPath = None
-                self._mediaPaused = False
+            if self._mediaPlayingPath and (os.path.normcase(self._mediaPlayingPath) == os.path.normcase(tempPath) or os.path.normcase(self._mediaPlayingPath) == os.path.normcase(os.path.splitext(tempPath)[0] + '.wav')):
+                self._mediaStop()
+                return
         except Exception:
             pass
 
@@ -987,35 +968,44 @@ class WikiFusionDialog(wx.Dialog):
             ui.message(_("Failed to download media: {0}").format(e))
             return
 
-        # Play using wx.media if available; otherwise try Windows MCI; otherwise open externally.
+        
+        # If this is a format Windows often can't decode natively (e.g. OGG/OPUS),
+        # decode to WAV via ffmpeg (if available) so we can still play in-addon.
+        playPath = tempPath
+        try:
+            if _isFfmpegDecodableExt(ext):
+                ffmpegPath = _whichFfmpeg()
+                if not ffmpegPath:
+                    ui.message(_("This audio format needs ffmpeg for in-app playback. Install ffmpeg or use Ctrl+Enter to download."))
+                    return
+                wavPath = os.path.splitext(tempPath)[0] + ".wav"
+                if not os.path.isfile(wavPath) or os.path.getsize(wavPath) == 0:
+                    _ffmpegDecodeToWav(ffmpegPath, tempPath, wavPath)
+                playPath = wavPath
+        except Exception as e:
+            ui.message(_("Failed to prepare audio for playback: {0}").format(e))
+            return
+
+# Play using wx.media if available; otherwise try Windows MCI; otherwise open externally.
         if getattr(self, "_mediaCtrl", None) is not None:
             try:
-                if self._mediaCtrl.Load(tempPath):
+                if self._mediaCtrl.Load(playPath):
                     self._mediaCtrl.Play()
-                    self._mediaPlayingPath = tempPath
+                    self._mediaPlayingPath = playPath
                     self._mediaPaused = False
                     return
             except Exception:
                 pass
 
         try:
-            _mciPlayPath(tempPath)
-            self._mediaPlayingPath = tempPath
+            _mciPlayPath(playPath)
+            self._mediaPlayingPath = playPath
             self._mediaPaused = False
             return
         except Exception:
             pass
 
-        # Fallback: open with default system handler
-        try:
-            if hasattr(os, "startfile"):
-                os.startfile(tempPath)  # type: ignore[attr-defined]
-            else:
-                webbrowser.open("file://" + urllib.parse.quote(tempPath))
-            self._mediaPlayingPath = tempPath
-            self._mediaPaused = False
-        except Exception as e:
-            ui.message(_("Playback unavailable. Use Ctrl+Enter to download. ({0})").format(e))
+        ui.message(_("Unable to play this file in-app. Use Ctrl+Enter to download."))
 
     def _mediaDownloadSelected(self):
         item = self._getSelectedMediaItem()
