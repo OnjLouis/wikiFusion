@@ -38,6 +38,19 @@ try:
         if err != 0:
             raise OSError(int(err))
 
+
+    def _mciQuery(cmd: str) -> str:
+        # Query an MCI string result.
+        buf = ctypes.create_unicode_buffer(256)
+        err = _mciSendStringW(cmd, buf, 256, None)
+        if err != 0:
+            raise OSError(int(err))
+        return (buf.value or "").strip()
+
+    def _mciGetMode() -> str:
+        # Returns playing/paused/stopped/not ready, etc.
+        return _mciQuery(f"status {_MCI_ALIAS} mode")
+
     def _mciStopAndClose() -> None:
         try:
             _mciSend(f"stop {_MCI_ALIAS}")
@@ -779,6 +792,11 @@ class WikiFusionDialog(wx.Dialog):
             try:
                 self._mediaCtrl = wxmedia.MediaCtrl(self)
                 self._mediaCtrl.Hide()
+                try:
+                    if hasattr(wxmedia, "EVT_MEDIA_FINISHED"):
+                        self._mediaCtrl.Bind(wxmedia.EVT_MEDIA_FINISHED, self._onMediaFinished)
+                except Exception:
+                    pass
             except Exception:
                 self._mediaCtrl = None
 # Buttons
@@ -881,6 +899,34 @@ class WikiFusionDialog(wx.Dialog):
         self._mediaPlayingPath = None
         self._mediaPaused = False
 
+    def _onMediaFinished(self, evt):
+        # Reset state when playback ends naturally, so Enter will play again immediately.
+        self._mediaPlayingPath = None
+        self._mediaPaused = False
+        try:
+            evt.Skip()
+        except Exception:
+            pass
+
+    def _isMediaActive(self) -> bool:
+        # True if the in-addon player is currently playing or paused.
+        if getattr(self, "_mediaCtrl", None) is not None and getattr(self, "_wxmedia", None) is not None:
+            try:
+                st = self._mediaCtrl.GetState()
+                playing = getattr(self._wxmedia, "MEDIASTATE_PLAYING", None)
+                paused = getattr(self._wxmedia, "MEDIASTATE_PAUSED", None)
+                if st == playing or st == paused:
+                    return True
+            except Exception:
+                pass
+        try:
+            mode = (_mciGetMode() or "").strip().lower()
+            if mode in ("playing", "paused"):
+                return True
+        except Exception:
+            pass
+        return False
+
     def _mediaPauseToggle(self):
         if self._mediaPlayingPath is None:
             return
@@ -952,13 +998,22 @@ class WikiFusionDialog(wx.Dialog):
         safeName = safeBase + ext.lower()
         tempPath = os.path.join(self._mediaTempDir, safeName)
 
-        # Toggle stop if already playing the same file
+        # Toggle play/stop for the selected file.
+        # If playback has already finished, we treat Enter as "play again" (no double-press).
         try:
-            if self._mediaPlayingPath and (os.path.normcase(self._mediaPlayingPath) == os.path.normcase(tempPath) or os.path.normcase(self._mediaPlayingPath) == os.path.normcase(os.path.splitext(tempPath)[0] + '.wav')):
-                self._mediaStop()
-                return
+            if self._mediaPlayingPath and (
+                os.path.normcase(self._mediaPlayingPath) == os.path.normcase(tempPath)
+                or os.path.normcase(self._mediaPlayingPath) == os.path.normcase(os.path.splitext(tempPath)[0] + ".wav")
+            ):
+                if self._isMediaActive():
+                    self._mediaStop()
+                    return
+                # Finished/stopped already; reset and fall through to play again.
+                self._mediaPlayingPath = None
+                self._mediaPaused = False
         except Exception:
             pass
+
 
         # Download to temp (only if not already present).
         try:
