@@ -15,6 +15,7 @@ import urllib.parse
 import urllib.request
 import json
 import re
+import html
 import shutil
 import subprocess
 import nvwave
@@ -136,6 +137,8 @@ _CONFIG_SPEC = {
     "soundsEnabled": "boolean(default=True)",
     "siteLangCode": "string(default=en)",
     "wpLangCode": "string(default=en)",
+    "enableUncyclopedia": "boolean(default=False)",
+    "enableUrbanDictionary": "boolean(default=False)",
     "preferredLanguageSection": "string(default=English)",
     "allowAnyLanguageFallback": "boolean(default=False)",
     "autoOpenInBrowser": "boolean(default=False)",
@@ -235,6 +238,20 @@ def _wpEntryUrl(title):
     site = re.sub(r"[^a-zA-Z0-9\-]", "", site) or "en"
     return f"https://{site}.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'))}"
 
+
+# ---- Optional sources ----
+def _uncyclopediaApiBase():
+    return "https://en.uncyclopedia.co/w/api.php"
+
+def _uncyclopediaEntryUrl(title):
+    return f"https://en.uncyclopedia.co/wiki/{urllib.parse.quote(title.replace(' ', '_'))}"
+
+def _urbanDictionaryEntryUrl(title, defid=None):
+    params = {"term": title}
+    if defid:
+        params["defid"] = str(defid)
+    return "https://www.urbandictionary.com/define.php?" + urllib.parse.urlencode(params)
+
 def _wpOpensearch(q):
     """
     Wikipedia opensearch. Returns list of titles.
@@ -280,6 +297,46 @@ def _wpSummary(title):
         return str(page.get("extract") or "")
     return ""
 
+def _mwOpenSearch(apiBase, query):
+    params = {
+        "action": "opensearch",
+        "search": query,
+        "limit": _getInt(_s().get("maxMatches", 50), 50, 1, 50),
+        "namespace": 0,
+        "format": "json",
+    }
+    url = apiBase + "?" + urllib.parse.urlencode(params)
+    data = _httpGetJson(url)
+    if isinstance(data, list) and len(data) >= 2 and isinstance(data[1], list):
+        return [str(x) for x in data[1] if x]
+    return []
+
+def _mwSummary(apiBase, title):
+    params = {
+        "action": "query",
+        "prop": "extracts",
+        "explaintext": 1,
+        "exsectionformat": "plain",
+        "redirects": 1,
+        "titles": title,
+        "format": "json",
+    }
+    url = apiBase + "?" + urllib.parse.urlencode(params)
+    data = _httpGetJson(url)
+    pages = (data or {}).get("query", {}).get("pages", {})
+    if not isinstance(pages, dict) or not pages:
+        return ""
+    page = next(iter(pages.values()))
+    if isinstance(page, dict):
+        return str(page.get("extract") or "")
+    return ""
+
+def _uncyclopediaOpensearch(q):
+    return _mwOpenSearch(_uncyclopediaApiBase(), q)
+
+def _uncyclopediaSummary(title):
+    return _mwSummary(_uncyclopediaApiBase(), title)
+
 def _httpGetJson(url, params=None, timeout=10):
     """HTTP GET and decode JSON.
 
@@ -313,6 +370,12 @@ def _httpGetJson(url, params=None, timeout=10):
     with urllib.request.urlopen(req, timeout=int(timeout)) as resp:
         data = resp.read()
     return json.loads(data.decode("utf-8", errors="replace"))
+
+def _httpGetText(url, timeout=10):
+    req = urllib.request.Request(url, headers={"User-Agent": "wikiFusion (NVDA addon)"})
+    with urllib.request.urlopen(req, timeout=int(timeout)) as resp:
+        data = resp.read()
+    return data.decode("utf-8", errors="replace")
 
 
 
@@ -382,6 +445,19 @@ def _wpMediaFiles(title, limit=50):
         items.append({"title": fileTitle, "label": label, "url": url})
     return items
 
+def _uncyclopediaMediaFiles(title, limit=50):
+    apiBase = _uncyclopediaApiBase()
+    params = {"action": "parse", "page": title, "prop": "images", "format": "json"}
+    data = _httpGetJson(apiBase, params)
+    images = (data or {}).get("parse", {}).get("images", []) or []
+    fileTitles = _extractMediaFromParseImages(images)[:int(limit)]
+    pairs = _fileTitlesToUrls(apiBase, fileTitles)
+    items = []
+    for fileTitle, url in pairs:
+        label = fileTitle.replace("File:", "").strip()
+        items.append({"title": fileTitle, "label": label, "url": url})
+    return items
+
 def _wtMediaFiles(title, limit=50):
     # Wiktionary can also contain pronunciation audio.
     apiBase = _apiBase()
@@ -410,6 +486,81 @@ def _opensearch(query):
     titles = j[1] if len(j) > 1 else []
     return [t for t in titles if isinstance(t, str)]
 
+def _urbanDictionaryAutocomplete(query):
+    params = {"term": query}
+    data = _httpGetJson("https://api.urbandictionary.com/v0/autocomplete", params)
+    if isinstance(data, list):
+        return [str(x) for x in data if x]
+    return []
+
+def _cleanUrbanText(text):
+    text = html.unescape(str(text or ""))
+    text = re.sub(r"\[([^\]]+)\]", r"\1", text)
+    return re.sub(r"\r\n?", "\n", text).strip()
+
+def _urbanDictionaryDefinitions(term):
+    data = _httpGetJson("https://api.urbandictionary.com/v0/define", {"term": term})
+    entries = (data or {}).get("list", []) or []
+    out = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        out.append({
+            "word": str(entry.get("word") or term),
+            "definition": _cleanUrbanText(entry.get("definition") or ""),
+            "example": _cleanUrbanText(entry.get("example") or ""),
+            "author": str(entry.get("author") or ""),
+            "thumbsUp": int(entry.get("thumbs_up") or 0),
+            "thumbsDown": int(entry.get("thumbs_down") or 0),
+            "writtenOn": str(entry.get("written_on") or ""),
+            "url": str(entry.get("permalink") or _urbanDictionaryEntryUrl(term, entry.get("defid"))),
+        })
+    return out
+
+def _enabledOptionalSources():
+    s = _s()
+    enabled = []
+    if _coerce_bool(s.get("enableUncyclopedia", False), False):
+        enabled.append("Uncyclopedia")
+    if _coerce_bool(s.get("enableUrbanDictionary", False), False):
+        enabled.append("Urban Dictionary")
+    return enabled
+
+def _displaySourceOrder():
+    base = ["Wikipedia", "Wiktionary"]
+    extras = _enabledOptionalSources()
+    if "Uncyclopedia" in extras:
+        base.append("Uncyclopedia")
+    if "Urban Dictionary" in extras:
+        base.append("Urban Dictionary")
+    return base
+
+def _prioritySourceOrder(single):
+    base = ["Wiktionary", "Wikipedia"] if single else ["Wikipedia", "Wiktionary"]
+    extras = _enabledOptionalSources()
+    if single:
+        if "Urban Dictionary" in extras:
+            base.insert(1, "Urban Dictionary")
+        if "Uncyclopedia" in extras:
+            base.append("Uncyclopedia")
+    else:
+        if "Uncyclopedia" in extras:
+            base.insert(1, "Uncyclopedia")
+        if "Urban Dictionary" in extras:
+            base.append("Urban Dictionary")
+    return base
+
+def _sourceEntryUrl(source, title):
+    if source == "Wikipedia":
+        return _wpEntryUrl(title)
+    if source == "Wiktionary":
+        return _entryUrl(title)
+    if source == "Uncyclopedia":
+        return _uncyclopediaEntryUrl(title)
+    if source == "Urban Dictionary":
+        return _urbanDictionaryEntryUrl(title)
+    return ""
+
 
 def _isSingleWord(q):
     # Treat hyphens/apostrophes as part of a "word" for routing purposes.
@@ -435,24 +586,30 @@ def _superSearch(q):
 
     single = _isSingleWord(q)
 
-    # Fetch both. Keep them independent so the UI can show buckets.
-    wt = []
-    wp = []
+    sourceTitles = {
+        "Wiktionary": [],
+        "Wikipedia": [],
+        "Uncyclopedia": [],
+        "Urban Dictionary": [],
+    }
     try:
-        wt = _opensearch(q)  # Wiktionary titles
+        sourceTitles["Wiktionary"] = _opensearch(q)
     except Exception:
-        wt = []
+        sourceTitles["Wiktionary"] = []
     try:
-        wp = _wpOpensearch(q)  # Wikipedia titles
+        sourceTitles["Wikipedia"] = _wpOpensearch(q)
     except Exception:
-        wp = []
-
-    if single:
-        primary = [{"title": t, "source": "Wiktionary"} for t in wt]
-        secondary = [{"title": t, "source": "Wikipedia"} for t in wp]
-    else:
-        primary = [{"title": t, "source": "Wikipedia"} for t in wp]
-        secondary = [{"title": t, "source": "Wiktionary"} for t in wt]
+        sourceTitles["Wikipedia"] = []
+    if _coerce_bool(_s().get("enableUncyclopedia", False), False):
+        try:
+            sourceTitles["Uncyclopedia"] = _uncyclopediaOpensearch(q)
+        except Exception:
+            sourceTitles["Uncyclopedia"] = []
+    if _coerce_bool(_s().get("enableUrbanDictionary", False), False):
+        try:
+            sourceTitles["Urban Dictionary"] = _urbanDictionaryAutocomplete(q)
+        except Exception:
+            sourceTitles["Urban Dictionary"] = []
 
     # De-dup within each source (opensearch usually already unique, but be safe)
     def _dedup(items):
@@ -466,7 +623,11 @@ def _superSearch(q):
             out.append(it)
         return out
 
-    return _dedup(primary) + _dedup(secondary)
+    ordered = []
+    for source in _prioritySourceOrder(single):
+        ordered.extend({"title": t, "source": source} for t in (sourceTitles.get(source) or []))
+
+    return _dedup(ordered)
 
 
 
@@ -689,6 +850,12 @@ class WikiFusionSettingsPanel(SettingsPanel):
         self.wpLang = helper.addLabeledControl(_("Wikipedia site language code (e.g. en, sv, es)"), wx.TextCtrl)
         self.wpLang.SetValue(str(s.get("wpLangCode", "en") or "en"))
 
+        self.uncyclopediaChk = helper.addItem(wx.CheckBox(self, label=_("Include Uncyclopedia results")))
+        self.uncyclopediaChk.SetValue(_coerce_bool(s.get("enableUncyclopedia", False), False))
+
+        self.urbanDictionaryChk = helper.addItem(wx.CheckBox(self, label=_("Include Urban Dictionary results")))
+        self.urbanDictionaryChk.SetValue(_coerce_bool(s.get("enableUrbanDictionary", False), False))
+
         self.prefLang = helper.addLabeledControl(_("Preferred language section name (e.g. English)"), wx.TextCtrl)
         self.prefLang.SetValue(str(s.get("preferredLanguageSection", "English") or "English"))
 
@@ -709,6 +876,8 @@ class WikiFusionSettingsPanel(SettingsPanel):
         s["soundsEnabled"] = bool(self.soundsChk.GetValue())
         s["siteLangCode"] = self.siteLang.GetValue().strip() or "en"
         s["wpLangCode"] = self.wpLang.GetValue().strip() or "en"
+        s["enableUncyclopedia"] = bool(self.uncyclopediaChk.GetValue())
+        s["enableUrbanDictionary"] = bool(self.urbanDictionaryChk.GetValue())
         s["preferredLanguageSection"] = self.prefLang.GetValue().strip() or "English"
         s["allowAnyLanguageFallback"] = bool(self.anyLangChk.GetValue())
         s["autoOpenInBrowser"] = bool(self.autoOpenChk.GetValue())
@@ -741,7 +910,7 @@ class WikiFusionDialog(wx.Dialog):
         searchSizer.Add(self.searchBtn, 0, wx.ALL, 5)
         mainSizer.Add(searchSizer, 0, wx.EXPAND)
 
-        # Results (Tree: Wikipedia / Wiktionary buckets)
+        # Results (Tree: source buckets)
         self.results = wx.TreeCtrl(
             self,
             style=wx.TR_HIDE_ROOT | wx.TR_HAS_BUTTONS | wx.TR_LINES_AT_ROOT | wx.TR_SINGLE | wx.BORDER_SUNKEN
@@ -754,20 +923,23 @@ class WikiFusionDialog(wx.Dialog):
         self.article = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.BORDER_SUNKEN)
         contentSizer.Add(self.article, 3, wx.EXPAND | wx.ALL, 5)
 
+        self.mediaPanel = wx.Panel(self)
         mediaSizer = wx.BoxSizer(wx.VERTICAL)
-        mediaSizer.Add(wx.StaticText(self, label=_("Media")), 0, wx.LEFT | wx.TOP, 5)
-        self.mediaList = wx.ListBox(self, choices=[], style=wx.LB_SINGLE | wx.BORDER_SUNKEN)
+        mediaSizer.Add(wx.StaticText(self.mediaPanel, label=_("Media")), 0, wx.LEFT | wx.TOP, 5)
+        self.mediaList = wx.ListBox(self.mediaPanel, choices=[], style=wx.LB_SINGLE | wx.BORDER_SUNKEN)
         mediaSizer.Add(self.mediaList, 1, wx.EXPAND | wx.ALL, 5)
 
         mediaBtnSizer = wx.BoxSizer(wx.HORIZONTAL)
-        self.mediaPlayBtn = wx.Button(self, label=_("&Play/Stop"))
-        self.mediaPauseBtn = wx.Button(self, label=_("P&ause/Resume"))
-        self.mediaDownloadBtn = wx.Button(self, label=_("&Download"))
+        self.mediaPlayBtn = wx.Button(self.mediaPanel, label=_("&Play/Stop"))
+        self.mediaPauseBtn = wx.Button(self.mediaPanel, label=_("P&ause/Resume"))
+        self.mediaDownloadBtn = wx.Button(self.mediaPanel, label=_("&Download"))
         mediaBtnSizer.Add(self.mediaPlayBtn, 1, wx.EXPAND | wx.ALL, 2)
         mediaBtnSizer.Add(self.mediaPauseBtn, 1, wx.EXPAND | wx.ALL, 2)
         mediaBtnSizer.Add(self.mediaDownloadBtn, 1, wx.EXPAND | wx.ALL, 2)
         mediaSizer.Add(mediaBtnSizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 5)
-        contentSizer.Add(mediaSizer, 1, wx.EXPAND)
+        self.mediaPanel.SetSizer(mediaSizer)
+        self.mediaPanel.Hide()
+        contentSizer.Add(self.mediaPanel, 1, wx.EXPAND)
 
         mainSizer.Add(contentSizer, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 0)
 
@@ -1147,6 +1319,26 @@ class WikiFusionDialog(wx.Dialog):
             self._mediaItems = []
             self.mediaList.Set([])
             self.mediaList.Enable(False)
+            self._setMediaPanelVisible(False)
+        except Exception:
+            pass
+
+    def _setMediaPanelVisible(self, visible):
+        try:
+            self.mediaPanel.Show(bool(visible))
+            self.Layout()
+        except Exception:
+            pass
+
+    def _setTreeItemMediaIndicator(self, item, hasMedia):
+        try:
+            title = str(item.get("title") or "")
+            source = str(item.get("source") or "")
+            treeItem = self._treeItemByKey.get((source, title.strip().lower()))
+            if treeItem is None or not treeItem.IsOk():
+                return
+            label = title + (_(" [media]") if hasMedia else "")
+            self.results.SetItemText(treeItem, label)
         except Exception:
             pass
 
@@ -1201,24 +1393,20 @@ class WikiFusionDialog(wx.Dialog):
             wx.CallAfter(self.query.SetFocus)
             return
 
-        # Group into buckets, but preserve priority order (primary bucket first).
+        # Group into buckets, but preserve source priority order.
         single = _isSingleWord(q)
-        primary = "Wiktionary" if single else "Wikipedia"
-        secondary = "Wikipedia" if single else "Wiktionary"
-
-        grouped = {"Wikipedia": [], "Wiktionary": []}
+        sourceOrder = _displaySourceOrder()
+        grouped = dict((source, []) for source in sourceOrder)
         for it in items:
             src = str(it.get("source") or "")
             title = str(it.get("title") or "")
             if src in grouped and title:
                 grouped[src].append(title)
 
-        order = [primary, secondary]
-
         firstLeaf = None
         bucketItems = {}
 
-        for src in order:
+        for src in sourceOrder:
             titles = grouped.get(src) or []
             if not titles:
                 continue
@@ -1243,7 +1431,10 @@ class WikiFusionDialog(wx.Dialog):
         # Select exact match if present (prefer primary source).
         qnorm = q.strip().lower()
         exact = None
-        exact = self._treeItemByKey.get((primary, qnorm)) or self._treeItemByKey.get((secondary, qnorm))
+        for source in _prioritySourceOrder(single):
+            exact = self._treeItemByKey.get((source, qnorm))
+            if exact is not None:
+                break
 
         if exact is not None:
             self.results.SelectItem(exact)
@@ -1320,10 +1511,10 @@ class WikiFusionDialog(wx.Dialog):
         title = str(data.get("title") or "")
         source = str(data.get("source") or "")
 
-        if source == "Wikipedia":
-            text = f"{title}\n{_wpEntryUrl(title)}"
+        if source in ("Wikipedia", "Uncyclopedia"):
+            text = f"{title}\n{_sourceEntryUrl(source, title)}"
         else:
-            # Wiktionary: copy just the word/phrase for spelling use.
+            # Dictionary-style sources copy just the word/phrase for spelling or reuse.
             text = title
 
         if wx.TheClipboard.Open():
@@ -1344,7 +1535,7 @@ class WikiFusionDialog(wx.Dialog):
             return
         title = str(data.get("title") or "")
         source = str(data.get("source") or "")
-        url = _wpEntryUrl(title) if source == "Wikipedia" else _entryUrl(title)
+        url = _sourceEntryUrl(source, title)
         if url:
             webbrowser.open(url)
 
@@ -1373,7 +1564,29 @@ class WikiFusionDialog(wx.Dialog):
                 text = _wpSummary(title)
                 url = _wpEntryUrl(title)
                 media = _wpMediaFiles(title)
-                wx.CallAfter(self._onLoadDone, item, originalQuery, "", text, "", [], [], media, False, url, focusArticle, None)
+                wx.CallAfter(
+                    self._onLoadDone, item, originalQuery, "", text, "", [], [], media,
+                    _coerce_bool(_s().get("autoOpenInBrowser", False), False), url, focusArticle, None
+                )
+                return
+
+            if source == "Uncyclopedia":
+                text = _uncyclopediaSummary(title)
+                url = _uncyclopediaEntryUrl(title)
+                media = _uncyclopediaMediaFiles(title)
+                wx.CallAfter(
+                    self._onLoadDone, item, originalQuery, "", text, "", [], [], media,
+                    _coerce_bool(_s().get("autoOpenInBrowser", False), False), url, focusArticle, None
+                )
+                return
+
+            if source == "Urban Dictionary":
+                defs = _urbanDictionaryDefinitions(title)
+                url = _urbanDictionaryEntryUrl(title)
+                wx.CallAfter(
+                    self._onLoadDone, item, originalQuery, "", defs, "", [], [], [],
+                    _coerce_bool(_s().get("autoOpenInBrowser", False), False), url, focusArticle, None
+                )
                 return
 
             # Wiktionary
@@ -1398,7 +1611,7 @@ class WikiFusionDialog(wx.Dialog):
             _playSound("error.wav")
             return
 
-        self._currentUrl = url or (_entryUrl(title) if source == "Wiktionary" else _wpEntryUrl(title))
+        self._currentUrl = url or _sourceEntryUrl(source, title)
 
         q = (originalQuery or "").strip()
         header = []
@@ -1411,9 +1624,29 @@ class WikiFusionDialog(wx.Dialog):
 
         body = ""
 
-        if source == "Wikipedia":
+        if source in ("Wikipedia", "Uncyclopedia"):
             text = str(defsOrText or "").strip()
             body = text if text else _("No summary text was returned.")
+        elif source == "Urban Dictionary":
+            defs = defsOrText if isinstance(defsOrText, list) else []
+            maxDefs = _getInt(_s().get("maxDefinitions", 50), 50, 1, 50)
+            defs = defs[:maxDefs]
+            if defs:
+                parts = []
+                for i, d in enumerate(defs, start=1):
+                    section = [f"{i}. {str(d.get('definition') or '').strip()}"]
+                    example = str(d.get("example") or "").strip()
+                    if example:
+                        section.append(_("Example: {0}").format(example))
+                    votes = _("Votes: +{0} / -{1}").format(int(d.get("thumbsUp") or 0), int(d.get("thumbsDown") or 0))
+                    section.append(votes)
+                    author = str(d.get("author") or "").strip()
+                    if author:
+                        section.append(_("Author: {0}").format(author))
+                    parts.append("\n".join(section).strip())
+                body = "\n\n".join(parts).strip()
+            else:
+                body = _("No Urban Dictionary definitions were returned.")
         else:
             defs = defsOrText if isinstance(defsOrText, list) else []
             maxDefs = _getInt(_s().get("maxDefinitions", 50), 50, 1, 50)
@@ -1445,10 +1678,12 @@ class WikiFusionDialog(wx.Dialog):
         except Exception:
             pass
         self._mediaItems = mediaItems if isinstance(mediaItems, list) else []
+        self._setTreeItemMediaIndicator(item, bool(self._mediaItems))
         try:
             labels = [str(it.get("label", "") or str(it.get("title", "") or "")) for it in self._mediaItems]
             self.mediaList.Set(labels)
             self.mediaList.Enable(bool(labels))
+            self._setMediaPanelVisible(bool(labels))
         except Exception:
             pass
 

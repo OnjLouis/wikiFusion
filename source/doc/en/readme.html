@@ -14,8 +14,11 @@
 <body>
   <h1>WikiFusion</h1>
 
-  <h2>What's new in 1.4</h2>
+  <h2>What's new in 1.5</h2>
   <ul>
+    <li><strong>Optional extra sources.</strong> Uncyclopedia and Urban Dictionary can now be enabled from Wiki Fusion settings if you want humorous or slang-heavy results.</li>
+    <li><strong>Main sources stay on top.</strong> The results tree now keeps Wikipedia and Wiktionary as the first two sections, with optional lighter sources listed underneath.</li>
+    <li><strong>Smart exact-match loading remains.</strong> Single-word searches still prefer dictionary-style hits first, while phrase searches still prefer encyclopedia-style hits first when choosing an automatic exact match.</li>
     <li><strong>Integrated media playback.</strong> Pages that contain audio (such as Wiktionary pronunciation guides) now show a Media list beside the article.</li>
     <li>Media can be played directly inside WikiFusion without opening your external media player.</li>
     <li>WikiFusion automatically uses <code>ffmpeg</code> (if available on your system PATH) to decode formats such as OGG and OPUS commonly used on Wikimedia sites.</li>
@@ -44,11 +47,13 @@
 
   <h2>The results tree</h2>
   <p>
-    Results are shown in a tree with up to two sections:
+    Results are shown in a tree with Wikipedia first, Wiktionary second, and any optional sources after them:
   </p>
   <ul>
     <li><strong>Wikipedia (N)</strong> - encyclopedia results</li>
     <li><strong>Wiktionary (M)</strong> - dictionary results</li>
+    <li><strong>Uncyclopedia</strong> - optional satirical encyclopedia results</li>
+    <li><strong>Urban Dictionary</strong> - optional slang results</li>
   </ul>
   <p>
     Each search automatically expands the sections so you don’t miss results.
@@ -83,6 +88,10 @@
     When a page includes audio files (for example, Wiktionary pronunciations), they appear in a
     <strong>Media</strong> list to the right of the article view.
   </p>
+  <p>
+    The media controls stay hidden until the currently loaded result actually has media.
+    After you load a result with media, its tree item is also marked with <code>[media]</code>.
+  </p>
 
   <ul>
     <li><kbd>Enter</kbd>: play the selected media item (press again to stop)</li>
@@ -110,6 +119,8 @@
   <ul>
     <li><strong>Wikipedia result</strong>: copies the title plus the page URL (useful for sharing or citations).</li>
     <li><strong>Wiktionary result</strong>: copies only the word (useful for spelling and learning).</li>
+    <li><strong>Urban Dictionary result</strong>: copies only the term.</li>
+    <li><strong>Uncyclopedia result</strong>: copies the title plus the page URL.</li>
   </ul>
   <div class="note">
     <p>
@@ -122,6 +133,8 @@
   <ul>
     <li><strong>Wikipedia language code</strong>: controls which Wikipedia you search (example: <code>en</code>, <code>sv</code>, <code>fr</code>).</li>
     <li><strong>Wiktionary language code</strong>: controls which Wiktionary you search.</li>
+    <li><strong>Include Uncyclopedia results</strong>: enables the optional satirical source.</li>
+    <li><strong>Include Urban Dictionary results</strong>: enables the optional slang source.</li>
     <li><strong>Maximum matches</strong>: default is 50.</li>
     <li><strong>Maximum definitions</strong>: default is 50.</li>
     <li><strong>Sounds</strong>: enable/disable UI sounds.</li>
