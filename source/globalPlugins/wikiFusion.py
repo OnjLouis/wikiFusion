@@ -21,6 +21,10 @@ import subprocess
 import nvwave
 import os
 import tempfile
+try:
+    from ._onjGithubUpdater import GitHubReleaseUpdater
+except Exception:
+    GitHubReleaseUpdater = None
 
 
 # ---- Simple media playback (Windows MCI) ----
@@ -1706,6 +1710,15 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     def __init__(self):
         super(GlobalPlugin, self).__init__()
         self._dlg = None
+        self._updater = None
+        if GitHubReleaseUpdater:
+            self._updater = GitHubReleaseUpdater("wikiFusion", "Wiki Fusion", "OnjLouis", "wikiFusion")
+            self._updater.start()
+
+    def terminate(self):
+        if self._updater:
+            self._updater.stop()
+        return super(GlobalPlugin, self).terminate()
 
     @scriptHandler.script(description=_("Open Wiki Fusion"))
     def script_openWikiFusion(self, gesture):
@@ -1721,6 +1734,13 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self._dlg.Show()
         self._dlg.Raise()
         wx.CallAfter(self._dlg.query.SetFocus)
+
+    @scriptHandler.script(description=_("Check for Wiki Fusion updates"))
+    def script_checkForWikiFusionUpdate(self, gesture):
+        if self._updater:
+            wx.CallAfter(self._updater.checkNow, True)
+        else:
+            ui.message(_("Updater is not available"))
 
     __gestures = {
         "kb:NVDA+alt+i": "openWikiFusion",
