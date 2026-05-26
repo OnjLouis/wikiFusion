@@ -2,6 +2,10 @@
 
 WikiFusion is an NVDA add-on that combines Wikipedia and Wiktionary lookup in one dialog, with smart routing, a results tree, optional media playback, and optional lighter sources.
 
+## What's New In 1.5.3
+
+- Updates package metadata for NVDA Add-on Store distribution.
+
 ## What's New In 1.5
 
 - Adds optional `Uncyclopedia` and `Urban Dictionary` sources in Wiki Fusion settings.
@@ -51,12 +55,10 @@ WikiFusion is an NVDA add-on that combines Wikipedia and Wiktionary lookup in on
 
 ## Install
 
-1. Download [wikiFusion.nvda-addon](https://github.com/OnjLouis/wikiFusion/releases/download/v1.5.2/wikiFusion.nvda-addon).
-2. In NVDA, open Add-on Manager and choose Install.
-3. Select the downloaded file and restart NVDA when prompted.
+1. Install Wiki Fusion from the [NVDA Add-on Store](https://addonstore.nvaccess.org/?addonId=wikiFusion&apiVersion=2026.1.0&channel=stable&language=en).
+2. Restart NVDA when prompted.
 
 ## Source And Package
 
 - Source snapshot: [`source/`](./source/)
 - Latest packaged add-on: [`wikiFusion.nvda-addon`](./wikiFusion.nvda-addon)
-- Latest release: [v1.5.2](https://github.com/OnjLouis/wikiFusion/releases/tag/v1.5.2)

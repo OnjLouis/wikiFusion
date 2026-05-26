@@ -21,10 +21,6 @@ import subprocess
 import nvwave
 import os
 import tempfile
-try:
-    from ._onjGithubUpdater import GitHubReleaseUpdater
-except Exception:
-    GitHubReleaseUpdater = None
 
 
 # ---- Simple media playback (Windows MCI) ----
@@ -1710,14 +1706,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     def __init__(self):
         super(GlobalPlugin, self).__init__()
         self._dlg = None
-        self._updater = None
-        if GitHubReleaseUpdater:
-            self._updater = GitHubReleaseUpdater("wikiFusion", "Wiki Fusion", "OnjLouis", "wikiFusion")
-            self._updater.start()
 
     def terminate(self):
-        if self._updater:
-            self._updater.stop()
         return super(GlobalPlugin, self).terminate()
 
     @scriptHandler.script(description=_("Open Wiki Fusion"))
