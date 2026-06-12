@@ -1703,6 +1703,8 @@ class WikiFusionDialog(wx.Dialog):
 
 # ---- Global plugin ----
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
+    scriptCategory = "Wiki Fusion"
+
     def __init__(self):
         super(GlobalPlugin, self).__init__()
         self._dlg = None
@@ -1724,13 +1726,6 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self._dlg.Show()
         self._dlg.Raise()
         wx.CallAfter(self._dlg.query.SetFocus)
-
-    @scriptHandler.script(description=_("Check for Wiki Fusion updates"))
-    def script_checkForWikiFusionUpdate(self, gesture):
-        if self._updater:
-            wx.CallAfter(self._updater.checkNow, True)
-        else:
-            ui.message(_("Updater is not available"))
 
     __gestures = {
         "kb:NVDA+alt+i": "openWikiFusion",
