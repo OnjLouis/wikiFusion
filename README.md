@@ -2,6 +2,10 @@
 
 WikiFusion is an NVDA add-on that combines Wikipedia and Wiktionary lookup in one dialog, with smart routing, a results tree, optional media playback, and optional lighter sources.
 
+## What's New In 1.5.5
+
+- Adds Ukrainian translation by George-br. See [PR #1](https://github.com/OnjLouis/wikiFusion/pull/1).
+
 ## What's New In 1.5.4
 
 - Removes the old GitHub updater hotkey now that Wiki Fusion is distributed through the NVDA Add-on Store.
