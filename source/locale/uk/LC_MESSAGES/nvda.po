@@ -1,0 +1,260 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: \n"
+"POT-Creation-Date: 2026-06-21 19:40+0300\n"
+"PO-Revision-Date: 2026-06-22 11:26+0300\n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Language: uk\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: Poedit 3.9\n"
+"X-Poedit-Basepath: ../globalPlugins\n"
+"X-Poedit-SearchPath-0: .\n"
+
+#: wikiFusion.py:837 wikiFusion.py:899
+msgid "Wiki Fusion"
+msgstr "Wiki Fusion"
+
+#: wikiFusion.py:844
+msgid "Enable sounds"
+msgstr "Увімкнути звуки"
+
+#: wikiFusion.py:847
+msgid "Wiktionary site language code (e.g. en, fr, pt-br)"
+msgstr "Код мови сайту Вікісловника (наприклад, en, fr, pt-br)"
+
+#: wikiFusion.py:850
+msgid "Wikipedia site language code (e.g. en, sv, es)"
+msgstr "Код мови сайту Вікіпедії (наприклад, en, sv, es)"
+
+#: wikiFusion.py:853
+msgid "Include Uncyclopedia results"
+msgstr "Включити результати з «Uncyclopedia»"
+
+#: wikiFusion.py:856
+msgid "Include Urban Dictionary results"
+msgstr "Включити результати з Словника Urban"
+
+#: wikiFusion.py:859
+msgid "Preferred language section name (e.g. English)"
+msgstr "Бажана назва розділу мови (наприклад, англійська)"
+
+#: wikiFusion.py:862
+msgid "Allow any language fallback if preferred language has no definitions"
+msgstr ""
+"Дозволити використання запасного варіанту будь-якої мови, якщо у обраній "
+"мові немає відповідних визначень"
+
+#: wikiFusion.py:865
+msgid "Automatically open entry in browser after successful lookup"
+msgstr "Автоматично відкривати запис у браузері після успішного пошуку"
+
+#: wikiFusion.py:868
+msgid "Maximum matches to display"
+msgstr "Максимальна кількість результатів для показу"
+
+#: wikiFusion.py:871
+msgid "Maximum definitions to display"
+msgstr "Максимальна кількість визначень для показу"
+
+#: wikiFusion.py:909
+msgid "&Search"
+msgstr "&Пошук"
+
+#: wikiFusion.py:928
+msgid "Media"
+msgstr "Медіа"
+
+#: wikiFusion.py:933
+msgid "&Play/Stop"
+msgstr "&Відтворити/Зупинити"
+
+#: wikiFusion.py:934
+msgid "P&ause/Resume"
+msgstr "&Призупинити/Продовжити"
+
+#: wikiFusion.py:935
+msgid "&Download"
+msgstr "&Завантажити"
+
+#: wikiFusion.py:976
+msgid "&Open in Browser"
+msgstr "&Відкрити у браузері"
+
+#: wikiFusion.py:977
+msgid "C&lear"
+msgstr "&Очистити"
+
+#: wikiFusion.py:978
+msgid "&Close"
+msgstr "&Закрити"
+
+#: wikiFusion.py:1039
+msgid "Help file not found."
+msgstr "Файл довідки не знайдено."
+
+#: wikiFusion.py:1046
+#, python-brace-format
+msgid "Unable to open help: {0}"
+msgstr "Не вдалося відкрити довідку: {0}"
+
+#: wikiFusion.py:1195
+#, python-brace-format
+msgid "Failed to download media: {0}"
+msgstr "Не вдалося завантажити медіафайл: {0}"
+
+#: wikiFusion.py:1206
+msgid ""
+"This audio format needs ffmpeg for in-app playback. Install ffmpeg or use "
+"Ctrl+Enter to download."
+msgstr ""
+"Для відтворення цього аудіоформату в додатку потрібен ffmpeg. Встановіть "
+"ffmpeg або натисніть Ctrl+Enter, щоб завантажити його."
+
+#: wikiFusion.py:1213
+#, python-brace-format
+msgid "Failed to prepare audio for playback: {0}"
+msgstr "Не вдалося підготувати аудіо для відтворення: {0}"
+
+#: wikiFusion.py:1235
+msgid "Unable to play this file in-app. Use Ctrl+Enter to download."
+msgstr ""
+"Цей файл неможливо відтворити в додатку. Натисніть Ctrl+Enter, щоб "
+"завантажити його."
+
+#: wikiFusion.py:1249
+msgid "Save media file"
+msgstr "Зберегти медіафайл"
+
+#: wikiFusion.py:1251
+msgid "All files (*.*)|*.*"
+msgstr "Усі файли (*.*)|*.*"
+
+#: wikiFusion.py:1260
+#, python-brace-format
+msgid "Saved: {0}"
+msgstr "Збережено: {0}"
+
+#: wikiFusion.py:1262
+#, python-brace-format
+msgid "Failed to save: {0}"
+msgstr "Не вдалося зберегти: {0}"
+
+#: wikiFusion.py:1340
+msgid " [media]"
+msgstr " [media]"
+
+#: wikiFusion.py:1361
+msgid "Type a word to search."
+msgstr "Введіть слово для пошуку."
+
+#: wikiFusion.py:1368
+msgid "Searching…"
+msgstr "Пошук…"
+
+#: wikiFusion.py:1386
+#, python-brace-format
+msgid "Search failed: {0}"
+msgstr "Пошук не вдався: {0}"
+
+#: wikiFusion.py:1392
+msgid "No results found."
+msgstr "Результатів не знайдено."
+
+#: wikiFusion.py:1413
+#, python-brace-format
+msgid "{0} ({1})"
+msgstr "{0} ({1})"
+
+#: wikiFusion.py:1427
+#, python-brace-format
+msgid "{0} results."
+msgstr "{0} результатів."
+
+#: wikiFusion.py:1458
+msgid "Use arrow keys to select a result, then press Enter to load."
+msgstr ""
+"Виберіть результат за допомогою клавіш зі стрілками, а потім натисніть "
+"Enter, щоб завантажити його."
+
+#: wikiFusion.py:1525
+msgid "Copied."
+msgstr "Скопійовано."
+
+#: wikiFusion.py:1527
+msgid "Clipboard unavailable."
+msgstr "Буфер обміну недоступний."
+
+#: wikiFusion.py:1534
+msgid "Select an entry to open."
+msgstr "Виберіть запис, щоб відкрити його."
+
+#: wikiFusion.py:1554
+msgid "Loading…"
+msgstr "Завантаження…"
+
+#: wikiFusion.py:1610
+#, python-brace-format
+msgid "Failed to load: {0}"
+msgstr "Не вдалося завантажити: {0}"
+
+#: wikiFusion.py:1619
+#, python-brace-format
+msgid "Query: {0}"
+msgstr "Запит: {0}"
+
+#: wikiFusion.py:1620
+#, python-brace-format
+msgid "Source: {0}"
+msgstr "Джерело: {0}"
+
+#: wikiFusion.py:1622
+#, python-brace-format
+msgid "Language: {0}"
+msgstr "Мова: {0}"
+
+#: wikiFusion.py:1629
+msgid "No summary text was returned."
+msgstr "Текст результату не був отриманий."
+
+#: wikiFusion.py:1640
+#, python-brace-format
+msgid "Example: {0}"
+msgstr "Приклад: {0}"
+
+#: wikiFusion.py:1641
+#, python-brace-format
+msgid "Votes: +{0} / -{1}"
+msgstr "Оцінки: +{0} / -{1}"
+
+#: wikiFusion.py:1645
+#, python-brace-format
+msgid "Author: {0}"
+msgstr "Автор: {0}"
+
+#: wikiFusion.py:1649
+msgid "No Urban Dictionary definitions were returned."
+msgstr "Визначень у «Словнику Urban» не знайдено."
+
+#: wikiFusion.py:1658
+msgid "No definitions found in the preferred section."
+msgstr "У вказаному розділі не знайдено жодних визначень."
+
+#: wikiFusion.py:1663
+msgid "Synonyms: "
+msgstr "Синоніми: "
+
+#: wikiFusion.py:1665
+msgid "Antonyms: "
+msgstr "Антоніми: "
+
+#: wikiFusion.py:1690
+#, python-brace-format
+msgid "Loaded: {0}"
+msgstr "Завантажено: {0}"
+
+#: wikiFusion.py:1715
+msgid "Open Wiki Fusion"
+msgstr "Відкрити Wiki Fusion"
